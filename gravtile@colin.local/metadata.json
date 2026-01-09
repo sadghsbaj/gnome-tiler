@@ -1,0 +1,13 @@
+{
+    "name": "GravTile",
+    "description": "Intelligent window tiling with edge-snapping, auto-tiling, and smart resizing",
+    "uuid": "gravtile@colin.local",
+    "version": 1,
+    "shell-version": [
+        "45",
+        "46",
+        "47",
+        "48"
+    ],
+    "url": "https://github.com/colin/gravtile"
+}
