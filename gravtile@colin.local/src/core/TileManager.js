@@ -15,7 +15,9 @@ import { StateStore } from './StateStore.js';
 import { SnapOverlay } from '../ui/SnapOverlay.js';
 import { SwapOverlay } from '../ui/SwapOverlay.js';
 import { InsertOverlay } from '../ui/InsertOverlay.js';
+import { GapOverlay } from '../ui/GapOverlay.js';
 import { InsertDetector } from '../services/InsertDetector.js';
+import { GapDetector } from '../services/GapDetector.js';
 import { GnomeCompat } from '../utils/GnomeCompat.js';
 import { CONFIG } from '../constants.js';
 
@@ -53,6 +55,12 @@ export class TileManager {
     /** @type {InsertOverlay} */
     _insertOverlay;
 
+    /** @type {GapDetector} */
+    _gapDetector;
+
+    /** @type {GapOverlay} */
+    _gapOverlay;
+
     /** @type {boolean} */
     _enabled = false;
 
@@ -73,9 +81,11 @@ export class TileManager {
         this._resizeHandler = new ResizeHandler(this._logger, this._stateStore);
         this._swapDetector = new SwapDetector(this._logger, this._stateStore);
         this._insertDetector = new InsertDetector(this._logger, this._stateStore);
+        this._gapDetector = new GapDetector(this._logger, this._stateStore);
         this._snapOverlay = new SnapOverlay(this._logger, this._layoutEngine);
         this._swapOverlay = new SwapOverlay(this._logger);
         this._insertOverlay = new InsertOverlay(this._logger);
+        this._gapOverlay = new GapOverlay(this._logger);
     }
 
     /**
@@ -126,12 +136,22 @@ export class TileManager {
             this._onInsertZoneChanged(zone);
         });
 
+        // Set up gap detection
+        this._gapDetector.onGapFillDetected((event) => {
+            this._onGapFillDetected(event);
+        });
+
+        this._gapDetector.onGapZoneChanged((zone) => {
+            this._onGapZoneChanged(zone);
+        });
+
         // Enable all services
         this._windowTracker.enable();
         this._snapDetector.enable();
         this._resizeHandler.enable();
         this._swapDetector.enable();
         this._insertDetector.enable();
+        this._gapDetector.enable();
 
         // Log monitor info
         this._logMonitorInfo();
@@ -152,9 +172,11 @@ export class TileManager {
         this._resizeHandler.disable();
         this._swapDetector.disable();
         this._insertDetector.disable();
+        this._gapDetector.disable();
         this._snapOverlay.destroy();
         this._swapOverlay.destroy();
         this._insertOverlay.destroy();
+        this._gapOverlay.destroy();
         this._stateStore.clear();
 
         this._enabled = false;
@@ -713,6 +735,53 @@ export class TileManager {
             this._stateStore.debugPrint();
         }
     }
+
+    /**
+     * Handle gap zone change (show/hide overlay)
+     * @param {import('../services/GapDetector.js').GapZone|null} zone
+     * @private
+     */
+    _onGapZoneChanged(zone) {
+        if (zone === null) {
+            this._gapOverlay.hide();
+            return;
+        }
+
+        this._gapOverlay.show(zone);
+    }
+
+    /**
+     * Handle gap fill detected (window dropped in empty gap)
+     * @param {import('../services/GapDetector.js').GapEvent} event
+     * @private
+     */
+    _onGapFillDetected(event) {
+        this._gapOverlay.hide();
+
+        this._logger.info(`Gap fill detected: ${event.zone.rect.width}px wide`);
+
+        const window = event.window;
+        const windowId = window.get_stable_sequence();
+        const gapRect = event.zone.rect;
+
+        // Simply place the window in the gap
+        GnomeCompat.moveResizeWindow(window, gapRect);
+
+        // Track it as tiled
+        this._stateStore.setWindow(windowId, {
+            rect: gapRect,
+            originalRect: GnomeCompat.getWindowRect(window),
+            zone: 'gap-fill',
+            isTiled: true,
+        });
+
+        // Recalculate neighbors
+        this._stateStore.recalculateNeighbors();
+
+        this._logger.info('Gap fill complete');
+
+        if (CONFIG.DEBUG) {
+            this._stateStore.debugPrint();
+        }
+    }
 }
-
-
