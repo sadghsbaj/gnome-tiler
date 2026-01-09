@@ -64,9 +64,6 @@ export class TileManager {
     /** @type {boolean} */
     _enabled = false;
 
-    /** @type {boolean} */
-    _autoTileEnabled = false; // Disabled for now - manual snap only
-
     /**
      * @param {import('../utils/Logger.js').Logger} logger
      */
@@ -143,6 +140,11 @@ export class TileManager {
 
         this._gapDetector.onGapZoneChanged((zone) => {
             this._onGapZoneChanged(zone);
+        });
+
+        // Set up resize completion callback for overlap correction
+        this._resizeHandler.onResizeComplete((windowId, monitorIndex) => {
+            this._correctLayoutOverlaps(windowId, monitorIndex);
         });
 
         // Enable all services
@@ -273,11 +275,6 @@ export class TileManager {
         }
 
         window.isManaged = true;
-
-        // Auto-tile if enabled
-        if (this._autoTileEnabled) {
-            this._autoTileWindow(window);
-        }
     }
 
     /**
@@ -292,101 +289,7 @@ export class TileManager {
         );
     }
 
-    /**
-     * Auto-tile a new window
-     * @param {import('../services/WindowTracker.js').TrackedWindow} window
-     * @private
-     */
-    _autoTileWindow(window) {
-        const tiledWindows = this._stateStore.getTiledWindows();
-        const monitorIndex = GnomeCompat.getWindowMonitor(window.metaWindow);
 
-        if (tiledWindows.length === 0) {
-            // First window: maximize it
-            this._logger.debug('First window - maximizing');
-            const rect = this._layoutEngine.calculateSnapRect('maximize', monitorIndex);
-
-            this._stateStore.setWindow(window.id, {
-                rect,
-                originalRect: GnomeCompat.getWindowRect(window.metaWindow),
-                zone: 'maximize',
-                isTiled: true,
-            });
-
-            GnomeCompat.moveResizeWindow(window.metaWindow, rect);
-        } else {
-            // Calculate new layout for all windows
-            this._redistributeWindows(window, monitorIndex);
-        }
-
-        this._stateStore.recalculateNeighbors();
-
-        if (CONFIG.DEBUG) {
-            this._stateStore.debugPrint();
-        }
-    }
-
-    /**
-     * Redistribute windows when a new one is added
-     * @param {import('../services/WindowTracker.js').TrackedWindow} newWindow
-     * @param {number} monitorIndex
-     * @private
-     */
-    _redistributeWindows(newWindow, monitorIndex) {
-        const tiledWindows = this._stateStore.getTiledWindows();
-        const workArea = GnomeCompat.getWorkArea(monitorIndex);
-        const gap = CONFIG.INNER_GAP;
-
-        // Total windows including new one
-        const totalWindows = tiledWindows.length + 1;
-
-        // Calculate width for each window
-        const totalGaps = gap * (totalWindows + 1); // gaps on edges and between
-        const availableWidth = workArea.width - totalGaps;
-        const windowWidth = Math.floor(availableWidth / totalWindows);
-
-        this._logger.info(`Redistributing to ${totalWindows} windows, width=${windowWidth}`);
-
-        // Reposition existing windows
-        let currentX = workArea.x + gap;
-
-        for (const tiled of tiledWindows) {
-            const rect = {
-                x: currentX,
-                y: workArea.y + gap,
-                width: windowWidth,
-                height: workArea.height - gap * 2,
-            };
-
-            // Update state
-            this._stateStore.setWindow(tiled.id, { rect });
-
-            // Find and move the actual window
-            const metaWindow = this._findMetaWindow(tiled.id);
-            if (metaWindow) {
-                GnomeCompat.moveResizeWindow(metaWindow, rect);
-            }
-
-            currentX += windowWidth + gap;
-        }
-
-        // Position new window at the end
-        const newRect = {
-            x: currentX,
-            y: workArea.y + gap,
-            width: windowWidth,
-            height: workArea.height - gap * 2,
-        };
-
-        this._stateStore.setWindow(newWindow.id, {
-            rect: newRect,
-            originalRect: GnomeCompat.getWindowRect(newWindow.metaWindow),
-            zone: 'auto',
-            isTiled: true,
-        });
-
-        GnomeCompat.moveResizeWindow(newWindow.metaWindow, newRect);
-    }
 
     /**
      * Find a Meta.Window by ID
@@ -525,14 +428,6 @@ export class TileManager {
         this._logger.info(`Untiled window ${windowId}`);
     }
 
-    /**
-     * Toggle auto-tiling
-     * @param {boolean} enabled
-     */
-    setAutoTileEnabled(enabled) {
-        this._autoTileEnabled = enabled;
-        this._logger.info(`Auto-tile ${enabled ? 'enabled' : 'disabled'}`);
-    }
 
     /**
      * Handle swap detected (when a window is dragged over another)

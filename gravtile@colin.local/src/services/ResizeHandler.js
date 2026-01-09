@@ -40,6 +40,9 @@ export class ResizeHandler {
     /** @type {number} */
     _pollTimeoutId = 0;
 
+    /** @type {Set<function(number, number): void>} */
+    _onResizeComplete = new Set();
+
     /**
      * @param {import('../utils/Logger.js').Logger} logger
      * @param {import('../core/StateStore.js').StateStore} stateStore
@@ -159,10 +162,36 @@ export class ResizeHandler {
         // Final update
         this._handleResizeComplete(window);
 
+        // Emit resize complete callback with window ID and monitor
+        if (this._resizingWindowId) {
+            const monitorIndex = GnomeCompat.getWindowMonitor(window);
+            this._emitResizeComplete(this._resizingWindowId, monitorIndex);
+        }
+
         this._resizingWindow = null;
         this._resizingWindowId = null;
         this._lastRect = null;
         this._resizeDirection = null;
+    }
+
+    /**
+     * Register callback for resize complete
+     * @param {function(number, number): void} callback - (windowId, monitorIndex)
+     */
+    onResizeComplete(callback) {
+        this._onResizeComplete.add(callback);
+    }
+
+    /**
+     * Emit resize complete
+     * @param {number} windowId
+     * @param {number} monitorIndex
+     * @private
+     */
+    _emitResizeComplete(windowId, monitorIndex) {
+        for (const cb of this._onResizeComplete) {
+            try { cb(windowId, monitorIndex); } catch (e) { this._logger.error('Callback error:', e); }
+        }
     }
 
     /**
