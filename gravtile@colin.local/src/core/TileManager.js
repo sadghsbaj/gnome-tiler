@@ -775,18 +775,26 @@ export class TileManager {
             const primary = actualWindows.find(w => w.isPrimary);
             if (primary && primary.rect.width > overflow + CONFIG.MIN_WINDOW_WIDTH) {
                 const newWidth = primary.rect.width - overflow;
-                const newRect = {
-                    x: primary.rect.x,
-                    y: primary.rect.y,
-                    width: newWidth,
-                    height: primary.rect.height,
-                };
 
-                GnomeCompat.moveResizeWindow(primary.metaWindow, newRect);
-                this._stateStore.setWindow(primary.id, { rect: newRect });
+                // Update the width in our array
+                primary.rect.width = newWidth;
 
-                // Re-adjust windows after primary
-                this._correctLayoutOverlaps(primaryWindowId, monitorIndex);
+                // Re-position all windows from left with corrected widths
+                currentX = workArea.x + gap;
+
+                for (const win of actualWindows) {
+                    const rect = {
+                        x: currentX,
+                        y: win.rect.y,
+                        width: win.rect.width,
+                        height: win.rect.height,
+                    };
+
+                    GnomeCompat.moveResizeWindow(win.metaWindow, rect);
+                    this._stateStore.setWindow(win.id, { rect });
+
+                    currentX += win.rect.width + gap;
+                }
             }
         }
     }
