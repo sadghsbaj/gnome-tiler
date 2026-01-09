@@ -182,7 +182,12 @@ export class InsertDetector {
      */
     _checkForInsertZone() {
         const [cursorX, cursorY] = global.get_pointer();
-        const tiledWindows = this._stateStore.getTiledWindows();
+        let tiledWindows = this._stateStore.getTiledWindows();
+
+        // Filter out windows that no longer exist on screen
+        const workspaceWindows = GnomeCompat.getWorkspaceWindows();
+        const existingIds = new Set(workspaceWindows.map(w => w.get_stable_sequence()));
+        tiledWindows = tiledWindows.filter(w => existingIds.has(w.id));
 
         // Need at least one tiled window
         if (tiledWindows.length === 0) {

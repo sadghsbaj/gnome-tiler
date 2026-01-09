@@ -219,7 +219,13 @@ export class SwapDetector {
         const currentRect = GnomeCompat.getWindowRect(this._draggedWindow);
         const currentCenter = getCenter(currentRect);
 
-        const tiledWindows = this._stateStore.getTiledWindows();
+        let tiledWindows = this._stateStore.getTiledWindows();
+
+        // Filter out windows that no longer exist on screen
+        const workspaceWindows = GnomeCompat.getWorkspaceWindows();
+        const existingIds = new Set(workspaceWindows.map(w => w.get_stable_sequence()));
+        tiledWindows = tiledWindows.filter(w => existingIds.has(w.id));
+
         let newTarget = null;
 
         for (const tiled of tiledWindows) {

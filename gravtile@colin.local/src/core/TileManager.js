@@ -625,9 +625,12 @@ export class TileManager {
         const workArea = GnomeCompat.getWorkArea(monitorIndex);
         const gap = CONFIG.INNER_GAP;
 
-        // Get all currently tiled windows
+        // Get all tiled windows on this monitor
+        // Filter out windows that no longer exist
+        const workspaceWindows = GnomeCompat.getWorkspaceWindows();
+        const existingIds = new Set(workspaceWindows.map(w => w.get_stable_sequence()));
         const tiledWindows = this._stateStore.getTiledWindows()
-            .filter(w => w.id !== insertedWindowId);
+            .filter(w => w.id !== insertedWindowId && existingIds.has(w.id));
 
         if (tiledWindows.length === 0) {
             // No tiled windows - just maximize the new one
@@ -645,23 +648,16 @@ export class TileManager {
         // Sort existing windows by X position
         tiledWindows.sort((a, b) => a.rect.x - b.rect.x);
 
-        // Calculate current total width used by tiled windows (excluding gaps)
-        const currentTotalWidth = tiledWindows.reduce((sum, w) => sum + w.rect.width, 0);
-
-        // Available width for content (excluding outer gaps and inner gaps)
+        // Total windows after insert
         const totalWindows = tiledWindows.length + 1;
-        const totalGapSpace = gap * (totalWindows + 1);
+
+        // Calculate equal width for all windows
+        // Available = workArea - outer gaps (2) - inner gaps (totalWindows - 1)
+        const totalGapSpace = gap * 2 + gap * (totalWindows - 1);
         const availableWidth = workArea.width - totalGapSpace;
+        const windowWidth = Math.floor(availableWidth / totalWindows);
 
-        // New window gets a proportional share (1 / totalWindows of available)
-        const newWindowWidth = Math.floor(availableWidth / totalWindows);
-
-        // Scale factor for existing windows to make room
-        // They keep their relative proportions but shrink to fit
-        const remainingWidth = availableWidth - newWindowWidth;
-        const scaleFactor = remainingWidth / currentTotalWidth;
-
-        this._logger.info(`Insert: scale=${scaleFactor.toFixed(2)}, newWidth=${newWindowWidth}`);
+        this._logger.info(`Insert: ${totalWindows} windows, each ${windowWidth}px wide`);
 
         // Find insert position based on zone
         let insertIndex = 0;
@@ -673,20 +669,20 @@ export class TileManager {
             insertIndex = i + 1;
         }
 
-        // Reposition all windows, preserving proportions
+        // Reposition all windows with equal width
         let currentX = workArea.x + gap;
         let windowIndex = 0;
 
         for (let i = 0; i < totalWindows; i++) {
+            const rect = {
+                x: currentX,
+                y: workArea.y + gap,
+                width: windowWidth,
+                height: workArea.height - gap * 2,
+            };
+
             if (i === insertIndex) {
                 // Insert the new window here
-                const rect = {
-                    x: currentX,
-                    y: workArea.y + gap,
-                    width: newWindowWidth,
-                    height: workArea.height - gap * 2,
-                };
-
                 GnomeCompat.moveResizeWindow(insertedWindow, rect);
                 this._stateStore.setWindow(insertedWindowId, {
                     rect,
@@ -694,29 +690,18 @@ export class TileManager {
                     zone: 'inserted',
                     isTiled: true,
                 });
-
-                currentX += newWindowWidth + gap;
             } else {
-                // Existing window - scale its width proportionally
+                // Existing window - give it equal width
                 const tiled = tiledWindows[windowIndex];
-                const scaledWidth = Math.floor(tiled.rect.width * scaleFactor);
-
-                const rect = {
-                    x: currentX,
-                    y: workArea.y + gap,
-                    width: scaledWidth,
-                    height: workArea.height - gap * 2,
-                };
-
                 const metaWindow = this._findMetaWindow(tiled.id);
                 if (metaWindow) {
                     GnomeCompat.moveResizeWindow(metaWindow, rect);
                     this._stateStore.setWindow(tiled.id, { rect });
                 }
-
-                currentX += scaledWidth + gap;
                 windowIndex++;
             }
+
+            currentX += windowWidth + gap;
         }
 
         // Recalculate neighbors
@@ -729,4 +714,5 @@ export class TileManager {
         }
     }
 }
+
 
