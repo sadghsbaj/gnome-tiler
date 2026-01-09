@@ -21,8 +21,8 @@ export const CONFIG = {
     /** Tolerance for edge detection (pixels) */
     EDGE_TOLERANCE: 10,
 
-    /** Minimum window width */
-    MIN_WINDOW_WIDTH: 200,
+    /** Minimum window width - system default is around 500px */
+    MIN_WINDOW_WIDTH: 500,
 
     /** Minimum window height */
     MIN_WINDOW_HEIGHT: 100,

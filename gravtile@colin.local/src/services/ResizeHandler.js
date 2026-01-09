@@ -245,19 +245,54 @@ export class ResizeHandler {
             const metaWindow = this._getMetaWindow(neighbor.id);
             if (!metaWindow) continue;
 
-            // Neighbor moves right and shrinks
-            const newRect = {
-                x: neighbor.rect.x + delta,
-                y: neighbor.rect.y,
-                width: neighbor.rect.width - delta,
-                height: neighbor.rect.height,
-            };
+            // Calculate new width for neighbor
+            const newNeighborWidth = neighbor.rect.width - delta;
 
-            if (newRect.width < CONFIG.MIN_WINDOW_WIDTH) continue;
+            // If neighbor would go below min width, constrain the resize
+            if (newNeighborWidth < CONFIG.MIN_WINDOW_WIDTH && delta > 0) {
+                // Calculate max delta that keeps neighbor at min width
+                const maxDelta = neighbor.rect.width - CONFIG.MIN_WINDOW_WIDTH;
 
-            GnomeCompat.moveResizeWindow(metaWindow, newRect);
-            GnomeCompat.raiseWindow(metaWindow); // Keep on top
-            this._stateStore.setWindow(neighbor.id, { rect: newRect });
+                if (maxDelta <= 0) {
+                    // Neighbor already at min, don't allow any growth
+                    // Constrain the resizing window back
+                    if (this._resizingWindow && this._lastRect) {
+                        const constrainedRect = {
+                            x: this._lastRect.x,
+                            y: this._lastRect.y,
+                            width: this._lastRect.width,
+                            height: this._lastRect.height,
+                        };
+                        GnomeCompat.moveResizeWindow(this._resizingWindow, constrainedRect);
+                        this._stateStore.setWindow(this._resizingWindowId, { rect: constrainedRect });
+                    }
+                    continue;
+                }
+
+                // Use the constrained delta
+                const newRect = {
+                    x: neighbor.rect.x + maxDelta,
+                    y: neighbor.rect.y,
+                    width: CONFIG.MIN_WINDOW_WIDTH,
+                    height: neighbor.rect.height,
+                };
+
+                GnomeCompat.moveResizeWindow(metaWindow, newRect);
+                GnomeCompat.raiseWindow(metaWindow);
+                this._stateStore.setWindow(neighbor.id, { rect: newRect });
+            } else {
+                // Normal adjustment
+                const newRect = {
+                    x: neighbor.rect.x + delta,
+                    y: neighbor.rect.y,
+                    width: newNeighborWidth,
+                    height: neighbor.rect.height,
+                };
+
+                GnomeCompat.moveResizeWindow(metaWindow, newRect);
+                GnomeCompat.raiseWindow(metaWindow);
+                this._stateStore.setWindow(neighbor.id, { rect: newRect });
+            }
         }
     }
 
@@ -277,18 +312,53 @@ export class ResizeHandler {
             if (!metaWindow) continue;
 
             // Neighbor width changes (x stays same, right edge moves)
-            const newRect = {
-                x: neighbor.rect.x,
-                y: neighbor.rect.y,
-                width: neighbor.rect.width + delta,
-                height: neighbor.rect.height,
-            };
+            // delta negative = window grew left = neighbor shrinks
+            const newNeighborWidth = neighbor.rect.width + delta;
 
-            if (newRect.width < CONFIG.MIN_WINDOW_WIDTH) continue;
+            // If neighbor would go below min width, constrain the resize
+            if (newNeighborWidth < CONFIG.MIN_WINDOW_WIDTH && delta < 0) {
+                // Calculate max delta that keeps neighbor at min width
+                const maxDelta = CONFIG.MIN_WINDOW_WIDTH - neighbor.rect.width;
 
-            GnomeCompat.moveResizeWindow(metaWindow, newRect);
-            GnomeCompat.raiseWindow(metaWindow); // Keep on top
-            this._stateStore.setWindow(neighbor.id, { rect: newRect });
+                if (neighbor.rect.width <= CONFIG.MIN_WINDOW_WIDTH) {
+                    // Neighbor already at min, don't allow any growth
+                    if (this._resizingWindow && this._lastRect) {
+                        const constrainedRect = {
+                            x: this._lastRect.x,
+                            y: this._lastRect.y,
+                            width: this._lastRect.width,
+                            height: this._lastRect.height,
+                        };
+                        GnomeCompat.moveResizeWindow(this._resizingWindow, constrainedRect);
+                        this._stateStore.setWindow(this._resizingWindowId, { rect: constrainedRect });
+                    }
+                    continue;
+                }
+
+                // Use constrained delta
+                const newRect = {
+                    x: neighbor.rect.x,
+                    y: neighbor.rect.y,
+                    width: CONFIG.MIN_WINDOW_WIDTH,
+                    height: neighbor.rect.height,
+                };
+
+                GnomeCompat.moveResizeWindow(metaWindow, newRect);
+                GnomeCompat.raiseWindow(metaWindow);
+                this._stateStore.setWindow(neighbor.id, { rect: newRect });
+            } else {
+                // Normal adjustment
+                const newRect = {
+                    x: neighbor.rect.x,
+                    y: neighbor.rect.y,
+                    width: newNeighborWidth,
+                    height: neighbor.rect.height,
+                };
+
+                GnomeCompat.moveResizeWindow(metaWindow, newRect);
+                GnomeCompat.raiseWindow(metaWindow);
+                this._stateStore.setWindow(neighbor.id, { rect: newRect });
+            }
         }
     }
 

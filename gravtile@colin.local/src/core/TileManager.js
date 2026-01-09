@@ -670,9 +670,6 @@ export class TileManager {
         // Sort existing windows by X position
         tiledWindows.sort((a, b) => a.rect.x - b.rect.x);
 
-        // Calculate current total width used by existing windows
-        const currentTotalWidth = tiledWindows.reduce((sum, w) => sum + w.rect.width, 0);
-
         // Total windows after insert
         const totalWindows = tiledWindows.length + 1;
 
@@ -682,14 +679,45 @@ export class TileManager {
         const availableWidth = workArea.width - totalGapSpace;
 
         // New window gets proportional share (1/totalWindows of available)
-        const newWindowWidth = Math.floor(availableWidth / totalWindows);
+        let newWindowWidth = Math.max(CONFIG.MIN_WINDOW_WIDTH, Math.floor(availableWidth / totalWindows));
 
-        // Scale factor: existing windows shrink to make room
-        // Remaining width = total available - new window width
+        // Calculate proportional widths for existing windows
+        const currentTotalWidth = tiledWindows.reduce((sum, w) => sum + w.rect.width, 0);
         const remainingWidth = availableWidth - newWindowWidth;
         const scaleFactor = remainingWidth / currentTotalWidth;
 
-        this._logger.info(`Insert: scale=${scaleFactor.toFixed(2)}, newWidth=${newWindowWidth}px`);
+        // Calculate scaled widths and enforce minimum
+        const windowWidths = [];
+        let widthAfterMinEnforcement = 0;
+        let windowsAtMinWidth = 0;
+
+        for (const tiled of tiledWindows) {
+            let scaledWidth = Math.floor(tiled.rect.width * scaleFactor);
+
+            if (scaledWidth < CONFIG.MIN_WINDOW_WIDTH) {
+                scaledWidth = CONFIG.MIN_WINDOW_WIDTH;
+                windowsAtMinWidth++;
+            }
+
+            windowWidths.push(scaledWidth);
+            widthAfterMinEnforcement += scaledWidth;
+        }
+
+        // If min width enforcement made total too wide, shrink windows that aren't at min
+        const excessWidth = (widthAfterMinEnforcement + newWindowWidth) - availableWidth;
+        if (excessWidth > 0 && windowsAtMinWidth < tiledWindows.length) {
+            // Distribute excess reduction among windows not at minimum
+            const windowsToShrink = tiledWindows.length - windowsAtMinWidth;
+            const shrinkPerWindow = Math.ceil(excessWidth / windowsToShrink);
+
+            for (let i = 0; i < windowWidths.length; i++) {
+                if (windowWidths[i] > CONFIG.MIN_WINDOW_WIDTH) {
+                    windowWidths[i] = Math.max(CONFIG.MIN_WINDOW_WIDTH, windowWidths[i] - shrinkPerWindow);
+                }
+            }
+        }
+
+        this._logger.info(`Insert: ${totalWindows} windows, new=${newWindowWidth}px, excess=${excessWidth}px`);
 
         // Find insert position based on zone
         let insertIndex = 0;
@@ -701,7 +729,7 @@ export class TileManager {
             insertIndex = i + 1;
         }
 
-        // Reposition all windows proportionally
+        // Reposition all windows
         let currentX = workArea.x + gap;
         let windowIndex = 0;
 
@@ -725,14 +753,14 @@ export class TileManager {
 
                 currentX += newWindowWidth + gap;
             } else {
-                // Existing window - scale proportionally
+                // Existing window
                 const tiled = tiledWindows[windowIndex];
-                const scaledWidth = Math.floor(tiled.rect.width * scaleFactor);
+                const width = windowWidths[windowIndex];
 
                 const rect = {
                     x: currentX,
                     y: workArea.y + gap,
-                    width: scaledWidth,
+                    width: width,
                     height: workArea.height - gap * 2,
                 };
 
@@ -742,7 +770,7 @@ export class TileManager {
                     this._stateStore.setWindow(tiled.id, { rect });
                 }
 
-                currentX += scaledWidth + gap;
+                currentX += width + gap;
                 windowIndex++;
             }
         }
@@ -750,10 +778,121 @@ export class TileManager {
         // Recalculate neighbors
         this._stateStore.recalculateNeighbors();
 
+        // Post-correction: Read actual positions and fix any overlaps
+        // The system may have enforced minimum widths
+        this._correctLayoutOverlaps(insertedWindowId, monitorIndex);
+
         this._logger.info('Insert complete');
 
         if (CONFIG.DEBUG) {
             this._stateStore.debugPrint();
+        }
+    }
+
+    /**
+     * Correct layout overlaps after insert/resize
+     * Reads actual window positions and adjusts to eliminate overlaps
+     * @param {number} primaryWindowId - The window that was just inserted/resized
+     * @param {number} monitorIndex
+     * @private
+     */
+    _correctLayoutOverlaps(primaryWindowId, monitorIndex) {
+        const workArea = GnomeCompat.getWorkArea(monitorIndex);
+        const gap = CONFIG.INNER_GAP;
+
+        // Get all tiled windows and read their ACTUAL positions
+        const workspaceWindows = GnomeCompat.getWorkspaceWindows();
+        const existingIds = new Set(workspaceWindows.map(w => w.get_stable_sequence()));
+
+        const tiledStates = this._stateStore.getTiledWindows()
+            .filter(w => existingIds.has(w.id));
+
+        if (tiledStates.length < 2) return;
+
+        // Read actual positions from windows
+        const actualWindows = [];
+        for (const state of tiledStates) {
+            const metaWindow = this._findMetaWindow(state.id);
+            if (metaWindow) {
+                const actualRect = GnomeCompat.getWindowRect(metaWindow);
+                actualWindows.push({
+                    id: state.id,
+                    metaWindow,
+                    rect: actualRect,
+                    isPrimary: state.id === primaryWindowId,
+                });
+            }
+        }
+
+        // Sort by X position
+        actualWindows.sort((a, b) => a.rect.x - b.rect.x);
+
+        // Check for overlaps and fix them
+        let needsCorrection = false;
+        for (let i = 0; i < actualWindows.length - 1; i++) {
+            const current = actualWindows[i];
+            const next = actualWindows[i + 1];
+
+            const currentRightEdge = current.rect.x + current.rect.width;
+            const expectedGap = gap;
+            const actualGap = next.rect.x - currentRightEdge;
+
+            if (actualGap < expectedGap - 5) { // Some tolerance
+                needsCorrection = true;
+                this._logger.debug(`Overlap detected: ${current.id} overlaps ${next.id} by ${expectedGap - actualGap}px`);
+            }
+        }
+
+        if (!needsCorrection) return;
+
+        this._logger.info('Correcting layout overlaps...');
+
+        // Redistribute based on actual widths
+        // Keep widths as they are (system enforced), just fix positions
+        let currentX = workArea.x + gap;
+
+        for (const win of actualWindows) {
+            const newX = currentX;
+
+            if (Math.abs(newX - win.rect.x) > 2) {
+                const newRect = {
+                    x: newX,
+                    y: win.rect.y,
+                    width: win.rect.width,
+                    height: win.rect.height,
+                };
+
+                GnomeCompat.moveResizeWindow(win.metaWindow, newRect);
+                this._stateStore.setWindow(win.id, { rect: newRect });
+            }
+
+            currentX += win.rect.width + gap;
+        }
+
+        // If windows don't fit, we need to shrink the primary (new) window
+        const totalUsed = currentX - gap;
+        const overflow = totalUsed - (workArea.x + workArea.width);
+
+        if (overflow > 0) {
+            this._logger.debug(`Layout overflow: ${overflow}px - shrinking primary window`);
+
+            // Find primary window and shrink it
+            const primary = actualWindows.find(w => w.isPrimary);
+            if (primary && primary.rect.width > overflow + CONFIG.MIN_WINDOW_WIDTH) {
+                const newWidth = primary.rect.width - overflow;
+                const newRect = {
+                    x: primary.rect.x,
+                    y: primary.rect.y,
+                    width: newWidth,
+                    height: primary.rect.height,
+                };
+
+                GnomeCompat.moveResizeWindow(primary.metaWindow, newRect);
+                this._stateStore.setWindow(primary.id, { rect: newRect });
+
+                // Re-adjust windows after primary
+                this._correctLayoutOverlaps(primaryWindowId, monitorIndex);
+            }
         }
     }
 
